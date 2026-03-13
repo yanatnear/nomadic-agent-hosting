@@ -1,0 +1,7 @@
+datacenter  = "{{ datacenter }}"
+data_dir    = "{{ consul_data_dir }}"
+server      = false
+bind_addr   = "{{ ansible_default_ipv4.address }}"
+client_addr = "0.0.0.0"
+
+retry_join = {{ consul_retry_join | to_json }}

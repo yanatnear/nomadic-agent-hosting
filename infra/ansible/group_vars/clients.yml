@@ -1,0 +1,3 @@
+nomad_server: false
+nomad_client: true
+consul_server: false

@@ -1,0 +1,21 @@
+datacenter: dc1
+nomad_version: "1.7.7"
+consul_version: "1.18.2"
+
+# Consul join addresses — these are the server private IPs.
+# Override in your inventory if IPs differ.
+consul_retry_join:
+  - "10.0.0.1"
+  - "10.0.0.2"
+  - "10.0.0.3"
+
+# Nomad server join addresses (same as Consul servers in this setup)
+nomad_retry_join:
+  - "10.0.0.1"
+  - "10.0.0.2"
+  - "10.0.0.3"
+
+# Data directories
+nomad_data_dir: /opt/nomad/data
+consul_data_dir: /opt/consul/data
+crabshack_data_dir: /data/crabshack

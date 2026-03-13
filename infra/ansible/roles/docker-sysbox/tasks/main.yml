@@ -1,0 +1,74 @@
+---
+# Install Docker CE and Sysbox CE 0.6.6 on Ubuntu 22.04+
+
+- name: Install Docker prerequisites
+  apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+    update_cache: yes
+
+- name: Add Docker GPG key
+  shell: |
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+      -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+  args:
+    creates: /etc/apt/keyrings/docker.asc
+
+- name: Add Docker apt repo
+  shell: |
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+      https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+      > /etc/apt/sources.list.d/docker.list
+  args:
+    creates: /etc/apt/sources.list.d/docker.list
+
+- name: Install Docker CE
+  apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+    update_cache: yes
+
+- name: Enable Docker
+  systemd:
+    name: docker
+    enabled: yes
+    state: started
+
+- name: Check if Sysbox is installed
+  command: dpkg -l sysbox-ce
+  register: sysbox_check
+  ignore_errors: yes
+  changed_when: false
+
+- name: Download Sysbox CE
+  get_url:
+    url: "https://downloads.nestybox.com/sysbox/releases/v0.6.6/sysbox-ce_0.6.6-0.linux_amd64.deb"
+    dest: /tmp/sysbox-ce.deb
+  when: sysbox_check.rc != 0
+
+- name: Install Sysbox CE
+  apt:
+    deb: /tmp/sysbox-ce.deb
+  when: sysbox_check.rc != 0
+
+- name: Verify sysbox-runc is registered with Docker
+  shell: "docker info --format '{{ '{{' }}.Runtimes{{ '}}' }}' | grep -q sysbox-runc"
+  changed_when: false
+
+- name: Create crabshack data directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ crabshack_data_dir }}"
+    - "{{ crabshack_data_dir }}/images"

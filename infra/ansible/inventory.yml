@@ -1,0 +1,18 @@
+# Edit this file with your actual node hostnames/IPs.
+# Servers run Nomad+Consul in server mode (need 3 or 5 for HA).
+# Clients run Nomad+Consul in client mode and accept workloads.
+all:
+  children:
+    servers:
+      hosts:
+        server-1:
+          ansible_host: 10.0.0.1
+        server-2:
+          ansible_host: 10.0.0.2
+        server-3:
+          ansible_host: 10.0.0.3
+    clients:
+      hosts:
+        client-1:
+          ansible_host: 10.0.1.1
+        # Add more client nodes here
