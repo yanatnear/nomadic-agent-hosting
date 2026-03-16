@@ -1,0 +1,27 @@
+groups:
+  - name: crabshack_egress
+    rules:
+      - alert: HighEgressDropRate
+        expr: rate(crabshack_egress_drops_packets[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High egress drop rate on {{ $labels.alloc }}"
+          description: >
+            Container allocation {{ $labels.alloc }} has been dropping more than 100 packets/s
+            (averaged over 5 minutes). This may indicate a misconfigured agent or an attempt
+            to reach blocked egress destinations. Current rate: {{ $value | humanize }} pkt/s.
+
+      - alert: VeryHighEgressDropRate
+        expr: rate(crabshack_egress_drops_packets[1m]) > 1000
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Very high egress drop rate on {{ $labels.alloc }}"
+          description: >
+            Container allocation {{ $labels.alloc }} is dropping more than 1000 packets/s
+            (averaged over 1 minute). This is likely an active DDoS attempt or a runaway
+            process generating high-volume blocked traffic. Immediate investigation required.
+            Current rate: {{ $value | humanize }} pkt/s.

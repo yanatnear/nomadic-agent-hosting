@@ -1,0 +1,16 @@
+{
+  "name": "agent-hosting-v2-ui",
+  "private": true,
+  "scripts": {
+    "dev": "bun run src/main.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
+  }
+}
