@@ -1,17 +1,34 @@
-import { test, expect, beforeEach } from "bun:test";
+import { test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { Database } from "bun:sqlite";
 import { initSchema } from "../db/schema.ts";
 import { createInstance, getInstance } from "../db/instance-queries.ts";
+import { handleGetInstance, handleListInstances } from "./instance-routes.ts";
 
 // Tests for response shapes that nearai-infra-qa expects
 // These test the DB layer and response format, not the live Nomad integration
 
 let db: Database;
+const fetchMock = mock(() => {
+  throw new Error("fetch mock not configured");
+});
+const config = {
+  port: 0,
+  dataDir: "/tmp",
+  adminSecret: "secret",
+  nomadAddr: "http://nomad.service",
+  nomadToken: "",
+};
 
 beforeEach(() => {
   db = new Database(":memory:");
   initSchema(db);
   db.run("INSERT INTO users (id, name) VALUES ('u1', 'Alice')");
+  globalThis.fetch = fetchMock as typeof fetch;
+  fetchMock.mockReset();
+});
+
+afterEach(() => {
+  fetchMock.mockReset();
 });
 
 function makeParams() {
@@ -162,4 +179,78 @@ test("default instance status is creating, not pending", () => {
   createInstance(db, makeParams());
   const inst = getInstance(db, "agent-abc12345")!;
   expect(inst.status).toBe("creating");
+});
+
+test("GET /instances marks externally stopped Nomad jobs as stopped", async () => {
+  createInstance(db, makeParams());
+  fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/v1/job/agent-agent-abc12345")) {
+      return new Response(JSON.stringify({ Stop: true }), { status: 200 });
+    }
+    if (url.endsWith("/v1/job/agent-agent-abc12345/allocations")) {
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+
+  const res = await handleListInstances(db, config, "u1", false);
+  const body = await res.json();
+
+  expect(body).toHaveLength(1);
+  expect(body[0].status).toBe("stopped");
+  expect(getInstance(db, "agent-abc12345")?.status).toBe("creating");
+});
+
+test("GET /instances removes rows whose Nomad jobs were purged", async () => {
+  createInstance(db, makeParams());
+  fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/v1/job/agent-agent-abc12345")) {
+      return new Response("not found", { status: 404 });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+
+  const res = await handleListInstances(db, config, "u1", false);
+  const body = await res.json();
+
+  expect(body).toHaveLength(0);
+  expect(getInstance(db, "agent-abc12345")).toBeNull();
+});
+
+test("GET /instances/{name} derives status and node_id from Nomad", async () => {
+  createInstance(db, makeParams());
+  fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/v1/job/agent-agent-abc12345")) {
+      return new Response(JSON.stringify({ Stop: false }), { status: 200 });
+    }
+    if (url.endsWith("/v1/job/agent-agent-abc12345/allocations")) {
+      return new Response(JSON.stringify([
+        { ID: "alloc-1", ClientStatus: "running", NodeID: "node-123" },
+      ]), { status: 200 });
+    }
+    if (url.endsWith("/v1/allocation/alloc-1")) {
+      return new Response(JSON.stringify({
+        Resources: {
+          Networks: [{ IP: "10.0.0.7", DynamicPorts: [{ Label: "gateway", Value: 20001 }, { Label: "ssh", Value: 20002 }] }],
+        },
+      }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+
+  const res = await handleGetInstance(db, config, "agent-abc12345", {
+    userId: "u1",
+    isAdmin: false,
+  });
+  const body = await res.json();
+
+  expect(body.status).toBe("running");
+  expect(body.node_id).toBe("node-123");
+  expect(body.gateway_port).toBe(20001);
+  expect(body.ssh_port).toBe(20002);
+  expect(getInstance(db, "agent-abc12345")?.status).toBe("creating");
+  expect(getInstance(db, "agent-abc12345")?.node_id).toBe("");
 });

@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
 import type { CrabshackConfig } from "../config.ts";
 import type { AuthResult } from "./auth-routes.ts";
-import { createInstance, getInstance, listInstances, listAllInstances, deleteInstance, updateInstanceStatus, updateInstanceNodeId } from "../db/instance-queries.ts";
+import type { InstanceRow } from "../db/instance-queries.ts";
+import { createInstance, getInstance, listInstances, listAllInstances, deleteInstance, updateInstanceStatus } from "../db/instance-queries.ts";
 import { renderJobTemplate } from "../template-render.ts";
-import { submitJob, stopJob, startJob, purgeJob, getJobAllocs, getAllocLogs, getAllocStats, parseAllocPorts, listNomadNodes, getNomadNode, resolveAllocEndpoint, putNomadVariable, deleteNomadVariable } from "../nomad/nomad-client.ts";
+import { submitJob, stopJob, startJob, purgeJob, getJob, getJobAllocs, getAllocLogs, getAllocStats, parseAllocPorts, listNomadNodes, getNomadNode, resolveAllocEndpoint, putNomadVariable, deleteNomadVariable } from "../nomad/nomad-client.ts";
 import { streamDeployEvents } from "../stream/deploy-stream.ts";
 
 /** Verify the caller owns the instance or is admin. Returns error Response or null if OK. */
@@ -54,6 +55,55 @@ function sseStream(
   return new Response(stream, {
     headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
   });
+}
+
+interface RuntimeInstanceView {
+  row: InstanceRow;
+  status: string;
+  nodeId: string | null;
+}
+
+function serializeInstanceView(view: RuntimeInstanceView): Record<string, unknown> {
+  const { row, status, nodeId } = view;
+  return {
+    name: row.name,
+    status,
+    service_type: row.service_type,
+    image: row.image,
+    mem_limit: row.mem_limit,
+    cpus: row.cpus,
+    storage_size: row.storage_size,
+    node_id: nodeId,
+    created_at: row.created_at,
+  };
+}
+
+async function reconcileInstanceState(
+  db: Database,
+  config: CrabshackConfig,
+  row: InstanceRow,
+) : Promise<RuntimeInstanceView | null> {
+  if (!row.nomad_job_id) {
+    return {
+      row,
+      status: row.status,
+      nodeId: null,
+    };
+  }
+
+  const job = await getJob(config.nomadAddr, row.nomad_job_id, config.nomadToken);
+  if (!job) {
+    deleteInstance(db, row.name);
+    return null;
+  }
+
+  const allocs = await getJobAllocs(config.nomadAddr, row.nomad_job_id, config.nomadToken);
+  const running = allocs.find((a: any) => a.ClientStatus === "running");
+  const latestAlloc = running ?? allocs[0];
+  const status = running ? "running" : ((job as any).Stop ? "stopped" : row.status);
+  const nodeId = ((latestAlloc as any)?.NodeID as string | undefined) ?? null;
+
+  return { row, status, nodeId };
 }
 
 export async function handleCreateInstance(
@@ -149,41 +199,40 @@ export async function handleGetInstance(
   const deny = checkOwnership(inst, auth);
   if (deny) return deny;
 
+  const view = await reconcileInstanceState(db, config, inst);
+  if (!view) return Response.json({ error: "Not found" }, { status: 404 });
+
   const jobId = `agent-${name}`;
   const ep = await resolveAllocEndpoint(config.nomadAddr, jobId, "gateway", config.nomadToken);
   const sshEp = await resolveAllocEndpoint(config.nomadAddr, jobId, "ssh", config.nomadToken);
 
   return Response.json({
-    name: inst.name,
-    status: inst.status,
-    service_type: inst.service_type,
-    image: inst.image,
-    mem_limit: inst.mem_limit,
-    cpus: inst.cpus,
-    storage_size: inst.storage_size,
-    node_id: inst.node_id || null,
-    token: inst.token,
+    name: view.row.name,
+    status: view.status,
+    service_type: view.row.service_type,
+    image: view.row.image,
+    mem_limit: view.row.mem_limit,
+    cpus: view.row.cpus,
+    storage_size: view.row.storage_size,
+    node_id: view.nodeId,
+    token: view.row.token,
     gateway_address: ep?.address ?? null,
     gateway_port: ep?.port ?? null,
     ssh_address: sshEp?.address ?? null,
     ssh_port: sshEp?.port ?? null,
-    created_at: inst.created_at,
+    created_at: view.row.created_at,
   });
 }
 
-export function handleListInstances(db: Database, userId: string, isAdmin: boolean): Response {
+export async function handleListInstances(
+  db: Database,
+  config: CrabshackConfig,
+  userId: string,
+  isAdmin: boolean,
+): Promise<Response> {
   const rows = isAdmin ? listAllInstances(db) : listInstances(db, userId);
-  return Response.json(rows.map(r => ({
-    name: r.name,
-    status: r.status,
-    service_type: r.service_type,
-    image: r.image,
-    mem_limit: r.mem_limit,
-    cpus: r.cpus,
-    storage_size: r.storage_size,
-    node_id: r.node_id || null,
-    created_at: r.created_at,
-  })));
+  const reconciled = await Promise.all(rows.map((row) => reconcileInstanceState(db, config, row)));
+  return Response.json(reconciled.filter((row): row is RuntimeInstanceView => row !== null).map(serializeInstanceView));
 }
 
 export async function handleDeleteInstance(

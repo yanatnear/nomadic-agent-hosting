@@ -99,6 +99,20 @@ export async function startJob(nomadAddr: string, jobId: string, token = ""): Pr
   return result.EvalID ?? "";
 }
 
+export async function getJob(
+  nomadAddr: string,
+  jobId: string,
+  token = "",
+): Promise<Record<string, unknown> | null> {
+  const resp = await fetch(`${nomadAddr}/v1/job/${jobId}`, {
+    method: "GET",
+    headers: nomadGetHeaders(token),
+  });
+  if (resp.status === 404) return null;
+  if (!resp.ok) throw new Error(`Nomad get job failed: ${await resp.text()}`);
+  return resp.json();
+}
+
 export async function getJobAllocs(
   nomadAddr: string,
   jobId: string,

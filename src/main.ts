@@ -74,7 +74,7 @@ Bun.serve({
 
     // Instances — collection
     if (path === "/instances" && method === "GET") {
-      return handleListInstances(db, auth.userId, auth.isAdmin);
+      return handleListInstances(db, config, auth.userId, auth.isAdmin);
     }
     if (path === "/instances" && method === "POST") {
       return handleCreateInstance(req, db, config, auth.userId);
