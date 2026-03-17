@@ -4,7 +4,10 @@
 #
 # Required variables (substituted by renderer):
 #   INSTANCE_NAME, IMAGE, MEM_MB, CPU_MHZ,
-#   NEARAI_API_KEY, NEARAI_API_URL, SSH_PUBKEY, INSTANCE_TOKEN
+#   NEARAI_API_URL, SSH_PUBKEY
+#
+# Secrets (NEARAI_API_KEY, INSTANCE_TOKEN) are stored in Nomad Variables
+# at path "crabshack/<instance-name>" and injected via template blocks.
 #
 # NOMAD_* variables are Nomad runtime variables resolved at job run time —
 # the renderer MUST NOT substitute them.
@@ -17,13 +20,31 @@ job "agent-${INSTANCE_NAME}" {
     count = 1
 
     network {
-      port "gateway" {}
-      port "ssh" {}
+      port "gateway" { to = 3000 }
+      port "ssh" { to = 2222 }
     }
 
     volume "agent-data" {
       type   = "host"
       source = "agent-data"
+    }
+
+    # --- Clean stale PID file from shared volume before worker starts ---
+
+    task "pid-cleanup" {
+      lifecycle {
+        hook    = "prestart"
+        sidecar = false
+      }
+      driver = "raw_exec"
+      config {
+        command = "/bin/sh"
+        args    = ["-c", "rm -f /data/crabshack/agent-data/.ironclaw/ironclaw.pid"]
+      }
+      resources {
+        memory = 16
+        cpu    = 50
+      }
     }
 
     # --- Egress lifecycle hooks ---
@@ -69,8 +90,9 @@ job "agent-${INSTANCE_NAME}" {
         image = "${IMAGE}"
         ports = ["gateway"]
 
-        port_map {
-          gateway = 3000
+        labels {
+          crabshack_instance = "${INSTANCE_NAME}"
+          crabshack_task     = "worker"
         }
       }
 
@@ -79,12 +101,18 @@ job "agent-${INSTANCE_NAME}" {
         destination = "/home/agent"
       }
 
-      env {
-        NEARAI_API_KEY = "${NEARAI_API_KEY}"
-        NEARAI_API_URL = "${NEARAI_API_URL}"
-        INSTANCE_TOKEN = "${INSTANCE_TOKEN}"
-        INSTANCE_NAME  = "${INSTANCE_NAME}"
-        GATEWAY_PORT   = "${NOMAD_PORT_gateway}"
+      template {
+        data        = <<-EOF
+{{ with nomadVar "crabshack/${INSTANCE_NAME}" }}
+NEARAI_API_KEY={{ .NEARAI_API_KEY }}
+INSTANCE_TOKEN={{ .INSTANCE_TOKEN }}
+{{ end }}
+NEARAI_API_URL=${NEARAI_API_URL}
+INSTANCE_NAME=${INSTANCE_NAME}
+GATEWAY_PORT={{ env "NOMAD_PORT_gateway" }}
+EOF
+        destination = "secrets/env.env"
+        env         = true
       }
 
       resources {
@@ -92,19 +120,6 @@ job "agent-${INSTANCE_NAME}" {
         cpu    = ${CPU_MHZ}
       }
 
-      service {
-        name = "agent-${INSTANCE_NAME}"
-        port = "gateway"
-        tags = ["agent", "ironclaw", "instance:${INSTANCE_NAME}"]
-
-        check {
-          type     = "http"
-          path     = "/health"
-          port     = "gateway"
-          interval = "15s"
-          timeout  = "5s"
-        }
-      }
     }
 
     # --- SSH sidecar ---
@@ -116,8 +131,9 @@ job "agent-${INSTANCE_NAME}" {
         image = "lscr.io/linuxserver/openssh-server:latest"
         ports = ["ssh"]
 
-        port_map {
-          ssh = 2222
+        labels {
+          crabshack_instance = "${INSTANCE_NAME}"
+          crabshack_task     = "sshd"
         }
       }
 
@@ -135,19 +151,6 @@ job "agent-${INSTANCE_NAME}" {
       resources {
         memory = 128
         cpu    = 100
-      }
-
-      service {
-        name = "agent-${INSTANCE_NAME}-ssh"
-        port = "ssh"
-        tags = ["agent-ssh", "ironclaw", "instance:${INSTANCE_NAME}"]
-
-        check {
-          type     = "tcp"
-          port     = "ssh"
-          interval = "15s"
-          timeout  = "5s"
-        }
       }
     }
   }

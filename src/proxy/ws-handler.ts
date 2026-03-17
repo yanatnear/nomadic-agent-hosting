@@ -1,11 +1,12 @@
-import { resolveService } from "../consul/consul-client.ts";
+import { resolveAllocEndpoint } from "../nomad/nomad-client.ts";
 import { debugLog } from "../debug.ts";
 
 export async function resolveWsTarget(
-  consulAddr: string,
+  nomadAddr: string,
   instanceName: string,
+  nomadToken = "",
 ): Promise<string | null> {
-  const ep = await resolveService(consulAddr, `agent-${instanceName}`);
+  const ep = await resolveAllocEndpoint(nomadAddr, `agent-${instanceName}`, "gateway", nomadToken);
   if (!ep) return null;
   return `ws://${ep.address}:${ep.port}`;
 }

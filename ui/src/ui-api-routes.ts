@@ -52,7 +52,10 @@ export async function handleUiApi(req: Request, path: string, deps: UiApiDeps): 
   }
 
   if (path === "/api/auth/check") {
-    return json({ ok: true }, 200);
+    // Import auth check from the UI auth module — caller must provide deps.secret
+    const { isAdminAuthed } = await import("./auth.ts");
+    const ok = isAdminAuthed(req, deps.secret);
+    return json({ ok }, ok ? 200 : 401);
   }
 
   return json({ error: "Not found" }, 404);

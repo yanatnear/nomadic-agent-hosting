@@ -1,10 +1,38 @@
 import type { Database } from "bun:sqlite";
 import type { CrabshackConfig } from "../config.ts";
+import type { AuthResult } from "./auth-routes.ts";
 import { createInstance, getInstance, listInstances, listAllInstances, deleteInstance, updateInstanceStatus, updateInstanceNodeId } from "../db/instance-queries.ts";
 import { renderJobTemplate } from "../template-render.ts";
-import { submitJob, stopJob, startJob, purgeJob, getJobAllocs, getAllocLogs, getAllocStats, parseAllocPorts } from "../nomad/nomad-client.ts";
-import { resolveService } from "../consul/consul-client.ts";
+import { submitJob, stopJob, startJob, purgeJob, getJobAllocs, getAllocLogs, getAllocStats, parseAllocPorts, listNomadNodes, getNomadNode, resolveAllocEndpoint, putNomadVariable, deleteNomadVariable } from "../nomad/nomad-client.ts";
 import { streamDeployEvents } from "../stream/deploy-stream.ts";
+
+/** Verify the caller owns the instance or is admin. Returns error Response or null if OK. */
+function checkOwnership(inst: { user_id: string }, auth: AuthResult): Response | null {
+  if (!auth.isAdmin && inst.user_id !== auth.userId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  return null;
+}
+
+/** Shorthand to get nomad addr+token from config. */
+function n(config: CrabshackConfig): [string, string] {
+  return [config.nomadAddr, config.nomadToken];
+}
+
+/** Resolve the public IP for an internal address by checking Nomad node meta. */
+async function resolvePublicIp(config: CrabshackConfig, internalIp: string): Promise<string> {
+  try {
+    const nodes = await listNomadNodes(...n(config));
+    for (const node of nodes) {
+      if ((node as any).Address === internalIp) {
+        const detail = await getNomadNode(config.nomadAddr, (node as any).ID, config.nomadToken);
+        const pub = (detail.Meta as Record<string, string>)?.public_ip;
+        if (pub) return pub;
+      }
+    }
+  } catch {}
+  return internalIp;
+}
 
 function sseStream(
   emitFn: (send: (event: string, data: Record<string, unknown>) => void) => Promise<void>,
@@ -61,19 +89,24 @@ export async function handleCreateInstance(
   const sshPubkey = (body.ssh_pubkey as string) || "";
   const storageSize = (body.storage_size as string) || "";
 
+  const jobId = `agent-${name}`;
+
+  // Store secrets in Nomad Variables — jobs read them via template blocks
+  await putNomadVariable(config.nomadAddr, `crabshack/${name}`, {
+    NEARAI_API_KEY: nearaiApiKey,
+    INSTANCE_TOKEN: instanceToken,
+  }, config.nomadToken);
+
   const hcl = renderJobTemplate(serviceType, {
     INSTANCE_NAME: name,
     IMAGE: image,
     MEM_MB: String(memMb),
     CPU_MHZ: String(cpuMhz),
-    NEARAI_API_KEY: nearaiApiKey,
     NEARAI_API_URL: nearaiApiUrl,
     SSH_PUBKEY: sshPubkey,
-    INSTANCE_TOKEN: instanceToken,
   });
 
-  const jobId = `agent-${name}`;
-  const evalId = await submitJob(config.nomadAddr, hcl);
+  const evalId = await submitJob(config.nomadAddr, hcl, config.nomadToken);
   createInstance(db, {
     name,
     userId,
@@ -89,7 +122,7 @@ export async function handleCreateInstance(
 
   return sseStream(async (send) => {
     send("created", { name });
-    for await (const event of streamDeployEvents(config.nomadAddr, evalId)) {
+    for await (const event of streamDeployEvents(config.nomadAddr, evalId, config.nomadToken)) {
       if (event.status === "running") {
         updateInstanceStatus(db, name, "running");
         send("ready", { name });
@@ -109,12 +142,16 @@ export async function handleGetInstance(
   db: Database,
   config: CrabshackConfig,
   name: string,
+  auth: AuthResult,
 ): Promise<Response> {
   const inst = getInstance(db, name);
   if (!inst) return Response.json({ error: "Not found" }, { status: 404 });
+  const deny = checkOwnership(inst, auth);
+  if (deny) return deny;
 
-  const ep = await resolveService(config.consulAddr, `agent-${name}`);
-  const sshEp = await resolveService(config.consulAddr, `agent-${name}-ssh`);
+  const jobId = `agent-${name}`;
+  const ep = await resolveAllocEndpoint(config.nomadAddr, jobId, "gateway", config.nomadToken);
+  const sshEp = await resolveAllocEndpoint(config.nomadAddr, jobId, "ssh", config.nomadToken);
 
   return Response.json({
     name: inst.name,
@@ -126,7 +163,9 @@ export async function handleGetInstance(
     storage_size: inst.storage_size,
     node_id: inst.node_id || null,
     token: inst.token,
+    gateway_address: ep?.address ?? null,
     gateway_port: ep?.port ?? null,
+    ssh_address: sshEp?.address ?? null,
     ssh_port: sshEp?.port ?? null,
     created_at: inst.created_at,
   });
@@ -151,7 +190,13 @@ export async function handleDeleteInstance(
   db: Database,
   config: CrabshackConfig,
   name: string,
+  auth: AuthResult,
 ): Promise<Response> {
+  const pre = getInstance(db, name);
+  if (!pre) return Response.json({ error: "Not found" }, { status: 404 });
+  const deny = checkOwnership(pre, auth);
+  if (deny) return deny;
+
   return sseStream(async (send) => {
     const inst = getInstance(db, name);
     if (!inst) {
@@ -159,8 +204,10 @@ export async function handleDeleteInstance(
       return;
     }
     if (inst.nomad_job_id) {
-      await purgeJob(config.nomadAddr, inst.nomad_job_id);
+      await purgeJob(config.nomadAddr, inst.nomad_job_id, config.nomadToken);
     }
+    // Clean up Nomad Variable holding this instance's secrets
+    await deleteNomadVariable(config.nomadAddr, `crabshack/${name}`, config.nomadToken).catch(() => {});
     deleteInstance(db, name);
     send("deleted", { name });
   });
@@ -170,13 +217,16 @@ export async function handleStopInstance(
   db: Database,
   config: CrabshackConfig,
   name: string,
+  auth: AuthResult,
 ): Promise<Response> {
   const inst = getInstance(db, name);
   if (!inst) return Response.json({ error: "Not found" }, { status: 404 });
+  const deny = checkOwnership(inst, auth);
+  if (deny) return deny;
 
   return sseStream(async (send) => {
     if (inst.nomad_job_id) {
-      await stopJob(config.nomadAddr, inst.nomad_job_id);
+      await stopJob(config.nomadAddr, inst.nomad_job_id, config.nomadToken);
     }
     updateInstanceStatus(db, name, "stopped");
     send("stopped", { name });
@@ -187,18 +237,21 @@ export async function handleStartInstance(
   db: Database,
   config: CrabshackConfig,
   name: string,
+  auth: AuthResult,
 ): Promise<Response> {
   const inst = getInstance(db, name);
   if (!inst) return Response.json({ error: "Not found" }, { status: 404 });
+  const deny = checkOwnership(inst, auth);
+  if (deny) return deny;
 
   return sseStream(async (send) => {
     if (!inst.nomad_job_id) {
       send("error", { message: "Instance has no Nomad job" });
       return;
     }
-    const evalId = await startJob(config.nomadAddr, inst.nomad_job_id);
+    const evalId = await startJob(config.nomadAddr, inst.nomad_job_id, config.nomadToken);
     updateInstanceStatus(db, name, "creating");
-    for await (const event of streamDeployEvents(config.nomadAddr, evalId)) {
+    for await (const event of streamDeployEvents(config.nomadAddr, evalId, config.nomadToken)) {
       if (event.status === "running") {
         updateInstanceStatus(db, name, "running");
         send("ready", { name });
@@ -218,21 +271,24 @@ export async function handleRestartInstance(
   db: Database,
   config: CrabshackConfig,
   name: string,
+  auth: AuthResult,
 ): Promise<Response> {
   const inst = getInstance(db, name);
   if (!inst) return Response.json({ error: "Not found" }, { status: 404 });
+  const deny = checkOwnership(inst, auth);
+  if (deny) return deny;
 
   return sseStream(async (send) => {
     if (!inst.nomad_job_id) {
       send("error", { message: "Instance has no Nomad job" });
       return;
     }
-    await stopJob(config.nomadAddr, inst.nomad_job_id);
+    await stopJob(config.nomadAddr, inst.nomad_job_id, config.nomadToken);
     // Brief pause for the stop to propagate
     await new Promise(r => setTimeout(r, 2000));
-    const evalId = await startJob(config.nomadAddr, inst.nomad_job_id);
+    const evalId = await startJob(config.nomadAddr, inst.nomad_job_id, config.nomadToken);
     updateInstanceStatus(db, name, "creating");
-    for await (const event of streamDeployEvents(config.nomadAddr, evalId)) {
+    for await (const event of streamDeployEvents(config.nomadAddr, evalId, config.nomadToken)) {
       if (event.status === "running") {
         updateInstanceStatus(db, name, "running");
         send("ready", { name });
@@ -252,17 +308,21 @@ export async function handleGetInstanceSsh(
   db: Database,
   config: CrabshackConfig,
   name: string,
+  auth: AuthResult,
 ): Promise<Response> {
   const inst = getInstance(db, name);
   if (!inst) return Response.json({ error: "Not found" }, { status: 404 });
+  const deny = checkOwnership(inst, auth);
+  if (deny) return deny;
 
-  const sshEp = await resolveService(config.consulAddr, `agent-${name}-ssh`);
+  const sshEp = await resolveAllocEndpoint(config.nomadAddr, `agent-${name}`, "ssh", config.nomadToken);
   if (!sshEp) {
     return Response.json({ error: "SSH endpoint not available" }, { status: 404 });
   }
 
+  const host = await resolvePublicIp(config, sshEp.address);
   return Response.json({
-    host: sshEp.address,
+    host,
     port: sshEp.port,
     user: "agent",
   });
@@ -273,11 +333,14 @@ export async function handleGetInstanceLogs(
   config: CrabshackConfig,
   name: string,
   tail: number,
+  auth: AuthResult,
 ): Promise<Response> {
   const inst = getInstance(db, name);
   if (!inst) return Response.json({ error: "Not found" }, { status: 404 });
+  const deny = checkOwnership(inst, auth);
+  if (deny) return deny;
 
-  const allocs = await getJobAllocs(config.nomadAddr, inst.nomad_job_id);
+  const allocs = await getJobAllocs(config.nomadAddr, inst.nomad_job_id, config.nomadToken);
   const running = allocs.find((a: any) => a.ClientStatus === "running");
   if (!running) {
     return Response.json({ name, logs: "" });
@@ -285,8 +348,8 @@ export async function handleGetInstanceLogs(
 
   const allocId = (running as any).ID as string;
   const taskName = "agent";
-  const stderr = await getAllocLogs(config.nomadAddr, allocId, taskName, "stderr", tail);
-  const stdout = await getAllocLogs(config.nomadAddr, allocId, taskName, "stdout", tail);
+  const stderr = await getAllocLogs(config.nomadAddr, allocId, taskName, "stderr", tail, config.nomadToken);
+  const stdout = await getAllocLogs(config.nomadAddr, allocId, taskName, "stdout", tail, config.nomadToken);
   const logs = stdout + stderr;
 
   return Response.json({ name, logs });
@@ -296,18 +359,21 @@ export async function handleGetInstanceStats(
   db: Database,
   config: CrabshackConfig,
   name: string,
+  auth: AuthResult,
 ): Promise<Response> {
   const inst = getInstance(db, name);
   if (!inst) return Response.json({ error: "Not found" }, { status: 404 });
+  const deny = checkOwnership(inst, auth);
+  if (deny) return deny;
 
-  const allocs = await getJobAllocs(config.nomadAddr, inst.nomad_job_id);
+  const allocs = await getJobAllocs(config.nomadAddr, inst.nomad_job_id, config.nomadToken);
   const running = allocs.find((a: any) => a.ClientStatus === "running");
   if (!running) {
     return Response.json({ name, stats: {} });
   }
 
   const allocId = (running as any).ID as string;
-  const rawStats = await getAllocStats(config.nomadAddr, allocId);
+  const rawStats = await getAllocStats(config.nomadAddr, allocId, config.nomadToken);
 
   return Response.json({ name, stats: rawStats });
 }

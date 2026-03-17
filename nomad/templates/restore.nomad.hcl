@@ -2,9 +2,11 @@
 # Variables substituted by the API's template renderer before submission.
 #
 # Required variables (substituted by renderer):
-#   INSTANCE_NAME, TARGET_NODE_ID,
-#   S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY,
-#   RESTIC_PASSWORD, RESTORE_PATH
+#   INSTANCE_NAME, TARGET_NODE_ID, S3_ENDPOINT, S3_BUCKET, RESTORE_PATH
+#
+# Secrets (RESTIC_PASSWORD, S3_ACCESS_KEY, S3_SECRET_KEY) are stored in
+# Nomad Variables at path "crabshack/restore-<instance-name>" and injected
+# via template blocks.
 #
 # Optional variables:
 #   SNAPSHOT_ID (defaults to "latest" in the script if unset)
@@ -28,14 +30,20 @@ job "restore-${INSTANCE_NAME}" {
         command = "/usr/local/bin/restic-restore.sh"
       }
 
-      env {
-        RESTIC_REPOSITORY      = "s3:${S3_ENDPOINT}/${S3_BUCKET}/backups/${INSTANCE_NAME}"
-        RESTIC_PASSWORD        = "${RESTIC_PASSWORD}"
-        RESTORE_PATH           = "${RESTORE_PATH}"
-        INSTANCE_NAME          = "${INSTANCE_NAME}"
-        SNAPSHOT_ID            = "${SNAPSHOT_ID}"
-        AWS_ACCESS_KEY_ID      = "${S3_ACCESS_KEY}"
-        AWS_SECRET_ACCESS_KEY  = "${S3_SECRET_KEY}"
+      template {
+        data        = <<-EOF
+{{ with nomadVar "crabshack/restore-${INSTANCE_NAME}" }}
+RESTIC_PASSWORD={{ .RESTIC_PASSWORD }}
+AWS_ACCESS_KEY_ID={{ .S3_ACCESS_KEY }}
+AWS_SECRET_ACCESS_KEY={{ .S3_SECRET_KEY }}
+{{ end }}
+RESTIC_REPOSITORY=s3:${S3_ENDPOINT}/${S3_BUCKET}/backups/${INSTANCE_NAME}
+RESTORE_PATH=${RESTORE_PATH}
+INSTANCE_NAME=${INSTANCE_NAME}
+SNAPSHOT_ID=${SNAPSHOT_ID}
+EOF
+        destination = "secrets/env.env"
+        env         = true
       }
 
       resources {

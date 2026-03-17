@@ -1,19 +1,27 @@
 import { createHash } from "node:crypto";
 
 function hashSecret(secret: string): string {
-  return createHash("sha256").update(secret).digest("hex").slice(0, 16);
+  return createHash("sha256").update(secret).digest("hex").slice(0, 32);
+}
+
+function parseCookie(header: string, name: string): string | null {
+  for (const part of header.split(";")) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k === name) return rest.join("=");
+  }
+  return null;
 }
 
 export function isAuthed(req: Request, secret: string): boolean {
   const cookie = req.headers.get("cookie") ?? "";
   const expected = hashSecret(secret);
-  return cookie.includes(`crabshack_session=${expected}`);
+  return parseCookie(cookie, "crabshack_session") === expected;
 }
 
 export function isAdminAuthed(req: Request, secret: string): boolean {
   const cookie = req.headers.get("cookie") ?? "";
   const expected = hashSecret(secret);
-  return cookie.includes(`crabshack_admin=${expected}`);
+  return parseCookie(cookie, "crabshack_admin") === expected;
 }
 
 export function cookieZone(req: Request, zone: string): string {

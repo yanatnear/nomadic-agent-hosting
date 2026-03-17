@@ -20,11 +20,20 @@ function nocache(res: Response): Response {
   return new Response(res.body, { status: res.status, headers: h });
 }
 
+function isSafeRedirect(url: string): boolean {
+  if (!url.startsWith("/")) return false;
+  if (url.startsWith("//")) return false;
+  return true;
+}
+
 async function handleAdminLogin(req: Request): Promise<Response> {
+  const { timingSafeEqual } = await import("node:crypto");
   const form = await req.formData();
   const secret = form.get("secret") as string;
-  const redirect = (form.get("redirect") as string) || "/";
-  if (secret !== SECRET) return loginPage("Invalid secret", redirect);
+  const rawRedirect = (form.get("redirect") as string) || "/";
+  const redirect = isSafeRedirect(rawRedirect) ? rawRedirect : "/";
+  const a = Buffer.from(secret), b = Buffer.from(SECRET);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return loginPage("Invalid secret", redirect);
   const zone = cookieZone(req, ZONE);
   const headers = new Headers({ Location: redirect });
   headers.append("Set-Cookie", setCookie(SECRET, zone));

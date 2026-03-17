@@ -34,11 +34,15 @@ export function formatAllocEvent(alloc: Record<string, unknown>): DeployEvent {
 export async function* streamDeployEvents(
   nomadAddr: string,
   evalId: string,
+  token = "",
 ): AsyncGenerator<DeployEvent> {
+  const headers: Record<string, string> = {};
+  if (token) headers["X-Nomad-Token"] = token;
+
   let allocId: string | null = null;
 
   for (let i = 0; i < 30; i++) {
-    const resp = await fetch(`${nomadAddr}/v1/evaluation/${evalId}/allocations`);
+    const resp = await fetch(`${nomadAddr}/v1/evaluation/${evalId}/allocations`, { headers });
     if (resp.ok) {
       const allocs = (await resp.json()) as { ID: string }[];
       if (allocs.length > 0) {
@@ -56,7 +60,7 @@ export async function* streamDeployEvents(
   }
 
   for (let i = 0; i < 120; i++) {
-    const resp = await fetch(`${nomadAddr}/v1/allocation/${allocId}`);
+    const resp = await fetch(`${nomadAddr}/v1/allocation/${allocId}`, { headers });
     if (!resp.ok) {
       yield { status: "error", message: "Failed to query allocation" };
       return;

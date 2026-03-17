@@ -3,7 +3,7 @@ export interface CrabshackConfig {
   port: number;
   dataDir: string;
   nomadAddr: string;
-  consulAddr: string;
+  nomadToken: string;
 }
 
 export function loadConfig(): CrabshackConfig {
@@ -14,6 +14,6 @@ export function loadConfig(): CrabshackConfig {
     port: parseInt(process.env.CRABSHACK_PORT || "7700", 10),
     dataDir: process.env.CRABSHACK_DATA_DIR || "./crabshack-data",
     nomadAddr: process.env.NOMAD_ADDR || "http://127.0.0.1:4646",
-    consulAddr: process.env.CONSUL_HTTP_ADDR || "http://127.0.0.1:8500",
+    nomadToken: process.env.NOMAD_TOKEN || "",
   };
 }

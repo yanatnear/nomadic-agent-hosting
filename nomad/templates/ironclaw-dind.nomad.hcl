@@ -3,7 +3,10 @@
 #
 # Required variables (substituted by renderer):
 #   INSTANCE_NAME, IMAGE, MEM_MB, CPU_MHZ,
-#   NEARAI_API_KEY, NEARAI_API_URL, SSH_PUBKEY, INSTANCE_TOKEN
+#   NEARAI_API_URL, SSH_PUBKEY
+#
+# Secrets (NEARAI_API_KEY, INSTANCE_TOKEN) are stored in Nomad Variables
+# at path "crabshack/<instance-name>" and injected via template blocks.
 #
 # NOMAD_* variables are Nomad runtime variables resolved at job run time —
 # the renderer MUST NOT substitute them.
@@ -16,8 +19,8 @@ job "agent-${INSTANCE_NAME}" {
     count = 1
 
     network {
-      port "gateway" {}
-      port "ssh" {}
+      port "gateway" { to = 3000 }
+      port "ssh" { to = 2222 }
     }
 
     # --- Egress lifecycle hooks ---
@@ -64,9 +67,9 @@ job "agent-${INSTANCE_NAME}" {
         runtime = "sysbox-runc"
         ports   = ["gateway", "ssh"]
 
-        port_map {
-          gateway = 3000
-          ssh     = 22
+        labels {
+          crabshack_instance = "${INSTANCE_NAME}"
+          crabshack_task     = "agent"
         }
 
         volumes = [
@@ -74,46 +77,25 @@ job "agent-${INSTANCE_NAME}" {
         ]
       }
 
-      env {
-        NEARAI_API_KEY = "${NEARAI_API_KEY}"
-        NEARAI_API_URL = "${NEARAI_API_URL}"
-        SSH_PUBKEY     = "${SSH_PUBKEY}"
-        INSTANCE_TOKEN = "${INSTANCE_TOKEN}"
-        INSTANCE_NAME  = "${INSTANCE_NAME}"
-        GATEWAY_PORT   = "${NOMAD_PORT_gateway}"
-        SSH_PORT       = "${NOMAD_PORT_ssh}"
+      template {
+        data        = <<-EOF
+{{ with nomadVar "crabshack/${INSTANCE_NAME}" }}
+NEARAI_API_KEY={{ .NEARAI_API_KEY }}
+INSTANCE_TOKEN={{ .INSTANCE_TOKEN }}
+{{ end }}
+NEARAI_API_URL=${NEARAI_API_URL}
+SSH_PUBKEY=${SSH_PUBKEY}
+INSTANCE_NAME=${INSTANCE_NAME}
+GATEWAY_PORT={{ env "NOMAD_PORT_gateway" }}
+SSH_PORT={{ env "NOMAD_PORT_ssh" }}
+EOF
+        destination = "secrets/env.env"
+        env         = true
       }
 
       resources {
         memory = ${MEM_MB}
         cpu    = ${CPU_MHZ}
-      }
-
-      service {
-        name = "agent-${INSTANCE_NAME}"
-        port = "gateway"
-        tags = ["agent", "ironclaw-dind", "instance:${INSTANCE_NAME}"]
-
-        check {
-          type     = "http"
-          path     = "/health"
-          port     = "gateway"
-          interval = "15s"
-          timeout  = "5s"
-        }
-      }
-
-      service {
-        name = "agent-${INSTANCE_NAME}-ssh"
-        port = "ssh"
-        tags = ["agent-ssh", "ironclaw-dind", "instance:${INSTANCE_NAME}"]
-
-        check {
-          type     = "tcp"
-          port     = "ssh"
-          interval = "15s"
-          timeout  = "5s"
-        }
       }
     }
   }

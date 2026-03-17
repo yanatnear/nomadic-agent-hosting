@@ -50,12 +50,12 @@ test("isAdminHost returns true for admin subdomain", () => {
   expect(isAdminHost("admin.agents.example.com", ZONE)).toBe(true);
 });
 
-test("isAdminHost returns true for localhost", () => {
-  expect(isAdminHost("localhost:3000", ZONE)).toBe(true);
+test("isAdminHost returns false for localhost when zone is set", () => {
+  expect(isAdminHost("localhost:3000", ZONE)).toBe(false);
 });
 
-test("isAdminHost returns true for 127.0.0.1", () => {
-  expect(isAdminHost("127.0.0.1:3000", ZONE)).toBe(true);
+test("isAdminHost returns false for 127.0.0.1 when zone is set", () => {
+  expect(isAdminHost("127.0.0.1:3000", ZONE)).toBe(false);
 });
 
 test("isAdminHost returns true when no zone (all hosts are admin)", () => {

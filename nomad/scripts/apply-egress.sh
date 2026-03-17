@@ -5,6 +5,8 @@
 set -euo pipefail
 
 ALLOC_ID="$1"
+STATE_DIR="/var/run/crabshack-egress"
+mkdir -p "$STATE_DIR"
 
 # Find the Docker container ID for this allocation.
 # Nomad labels containers with the allocation ID.
@@ -22,6 +24,9 @@ if [ -z "$CONTAINER_IP" ]; then
 fi
 
 CHAIN="CRABSHACK-${ALLOC_ID:0:8}"
+
+# Persist the container IP so remove-egress.sh can match the exact FORWARD rule
+echo "$CONTAINER_IP" > "${STATE_DIR}/${ALLOC_ID:0:8}.ip"
 
 # Create a dedicated iptables chain for this container
 iptables -N "$CHAIN" 2>/dev/null || true

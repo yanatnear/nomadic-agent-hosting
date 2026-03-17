@@ -5,7 +5,7 @@ import { isAuthed, isAdminAuthed, cookieZone, setCookie, setAdminCookie, clearCo
 const SECRET = "test-secret-123";
 
 function hashSecret(secret: string): string {
-  return createHash("sha256").update(secret).digest("hex").slice(0, 16);
+  return createHash("sha256").update(secret).digest("hex").slice(0, 32);
 }
 
 function reqWithCookie(cookie: string): Request {

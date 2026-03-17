@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { AuthResult } from "./auth-routes.ts";
 import { createUser, getUser, listUsers, createAccessToken } from "../db/user-queries.ts";
 
 export function handleListUsers(db: Database): Response {
@@ -6,7 +7,10 @@ export function handleListUsers(db: Database): Response {
   return Response.json(users);
 }
 
-export function handleGetUser(db: Database, userId: string): Response {
+export function handleGetUser(db: Database, userId: string, auth: AuthResult): Response {
+  if (!auth.isAdmin && auth.userId !== userId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   const user = getUser(db, userId);
   if (!user) return Response.json({ error: "User not found" }, { status: 404 });
   return Response.json(user);

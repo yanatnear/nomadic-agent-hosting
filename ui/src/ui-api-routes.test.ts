@@ -37,12 +37,12 @@ test("handleUiApi /api/ui/tunnel returns tunnel status", async () => {
   expect(body).toHaveProperty("running");
 });
 
-test("handleUiApi /api/auth/check returns ok", async () => {
+test("handleUiApi /api/auth/check returns 401 when not authed", async () => {
   const req = new Request("http://localhost/api/auth/check");
   const res = await handleUiApi(req, "/api/auth/check", deps);
-  expect(res.status).toBe(200);
+  expect(res.status).toBe(401);
   const body = await res.json();
-  expect(body).toEqual({ ok: true });
+  expect(body).toEqual({ ok: false });
 });
 
 test("handleUiApi unknown path returns 404", async () => {
