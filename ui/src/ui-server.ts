@@ -1,4 +1,6 @@
 import { serve } from "bun";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
 import { isAuthed, isAdminAuthed, setCookie, setAdminCookie, clearCookie, clearAdminCookie, cookieZone, loginPage } from "./auth.ts";
 import { ensureTunnel } from "./tunnel.ts";
 import { proxyToApiAdmin, proxyToApiPassthrough, proxyToAgent, resolveGw } from "./proxy.ts";
@@ -11,6 +13,23 @@ const ZONE = process.env.CRABSHACK_UI_ZONE ?? "";
 const CF_TOKEN = process.env.CRABSHACK_UI_CF_TOKEN ?? "";
 const CF_API_TOKEN = process.env.CRABSHACK_CF_API_TOKEN ?? "";
 const DEBUG = process.env.CRABSHACK_DEBUG === "1";
+
+// Build the React frontend at startup
+const UI_DIR = dirname(new URL(import.meta.url).pathname);
+const buildResult = await Bun.build({
+  entrypoints: [join(UI_DIR, "frontend.tsx")],
+  outdir: join(UI_DIR, ".build"),
+  minify: true,
+});
+if (!buildResult.success) {
+  console.error("Frontend build failed:", buildResult.logs);
+  process.exit(1);
+}
+const bundleName = buildResult.outputs[0].path.split("/").pop()!;
+const bundleBytes = readFileSync(buildResult.outputs[0].path);
+const indexHtml = readFileSync(join(UI_DIR, "index.html"), "utf-8")
+  .replace(`./frontend.tsx`, `/.build/${bundleName}`);
+console.log(`Frontend built: ${bundleName} (${(bundleBytes.length / 1024).toFixed(1)} KB)`);
 
 const uiDeps: UiApiDeps = { zone: ZONE, cfApiToken: CF_API_TOKEN, cfToken: CF_TOKEN, secret: SECRET };
 
@@ -84,13 +103,16 @@ export const server = serve<GwWsData>({
       }
 
       if (isUserHost(host, ZONE)) {
-        return nocache(new Response("<html><body>User portal</body></html>", { headers: { "Content-Type": "text/html" } }));
+        if (!isAuthed(req, SECRET)) {
+          return new Response(null, { status: 302, headers: { Location: `/login?r=${encodeURIComponent(url.pathname + url.search)}` } });
+        }
+        return nocache(new Response(indexHtml, { headers: { "Content-Type": "text/html" } }));
       }
 
       if (!isAdminAuthed(req, SECRET)) {
         return new Response(null, { status: 302, headers: { Location: `/login?r=${encodeURIComponent(url.pathname + url.search)}` } });
       }
-      return nocache(new Response("<html><body>Admin dashboard</body></html>", { headers: { "Content-Type": "text/html" } }));
+      return nocache(new Response(indexHtml, { headers: { "Content-Type": "text/html" } }));
     },
     "/api/crabshack/*": (req: Request, srv: any) => {
       const url = new URL(req.url);
@@ -115,6 +137,16 @@ export const server = serve<GwWsData>({
     "/api/ui/dns": (req: Request) => handleUiApi(req, "/api/ui/dns", uiDeps),
     "/api/auth/check": (req: Request) => handleUiApi(req, "/api/auth/check", uiDeps),
     "/api/ui/cf/setup": (req: Request) => handleUiApi(req, "/api/ui/cf/setup", uiDeps),
+    "/.build/*": (req: Request) => {
+      const url = new URL(req.url);
+      const file = url.pathname.split("/").pop();
+      if (file === bundleName) {
+        return new Response(bundleBytes, {
+          headers: { "Content-Type": "application/javascript", "Cache-Control": "public, max-age=31536000, immutable" },
+        });
+      }
+      return new Response("Not found", { status: 404 });
+    },
     "/login": (req: Request) => {
       const url = new URL(req.url);
       return nocache(loginPage("", url.searchParams.get("r") ?? "/"));
