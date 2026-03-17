@@ -69,7 +69,33 @@ bash infra/scripts/validate-cluster.sh
 curl http://localhost:7700/health
 ```
 
-The script creates two systemd services: `nomad` and `crabshack-api`. Manage with `systemctl {start,stop,restart,status} crabshack-api`.
+The script creates three systemd services: `nomad`, `crabshack-api`, and `crabshack-ui`. Manage with `systemctl {start,stop,restart,status} <service>`.
+
+### GCP Firewall Rules
+
+For GCloud deployments, set up the required firewall rules:
+
+```bash
+bash infra/scripts/gcloud-firewall.sh <PROJECT_ID>
+```
+
+This creates rules for:
+
+| Port | Service | Auth | Network Tag |
+|------|---------|------|-------------|
+| 22 | SSH | Key-based | `ssh-server` |
+| 3000 | CrabShack UI | Cookie/secret | `http-server` |
+| 7700 | CrabShack API | Bearer token | `http-server` |
+| 19001-29999 | Agent dynamic ports | Per-instance token | `crabshack-node` |
+
+The **Nomad UI (4646) is intentionally not exposed** — it has no authentication. Access it via SSH tunnel:
+
+```bash
+gcloud compute ssh <INSTANCE> --zone=<ZONE> -- -L 4646:localhost:4646
+# Then open http://localhost:4646
+```
+
+Ensure your VM has the required network tags: `http-server`, `crabshack-node`, `ssh-server`.
 
 ## Quick Start (Local Dev)
 
@@ -339,7 +365,8 @@ nomad/
 
 infra/
   scripts/
-    deploy.sh           Single-node full deploy (Docker+Sysbox+Nomad+API)
+    deploy.sh           Single-node full deploy (Docker+Sysbox+Nomad+API+UI)
+    gcloud-firewall.sh  GCP firewall rules setup
     bootstrap-server.sh Multi-node server bootstrap
     bootstrap-client.sh Multi-node client bootstrap
     bootstrap-local-dev.sh  Minimal dev setup (Nomad only)
