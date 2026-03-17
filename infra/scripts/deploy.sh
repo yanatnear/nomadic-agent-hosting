@@ -232,6 +232,9 @@ chmod +x /usr/local/bin/apply-egress.sh /usr/local/bin/remove-egress.sh
 log "Installing app dependencies"
 cd "$APP_DIR"
 bun install
+cd "$APP_DIR/ui"
+bun install
+cd "$APP_DIR"
 
 # ----------------------------------------- 9. CrabShack API systemd unit ---
 
@@ -258,6 +261,28 @@ Environment=NOMAD_ADDR=http://${INTERNAL_IP}:4646
 [Install]
 WantedBy=multi-user.target
 EOF
+log "Creating CrabShack UI systemd unit"
+cat > /etc/systemd/system/crabshack-ui.service <<EOF
+[Unit]
+Description=CrabShack UI Server
+After=network.target crabshack-api.service
+Wants=crabshack-api.service
+
+[Service]
+Type=simple
+User=${SUDO_USER:-root}
+WorkingDirectory=${APP_DIR}
+ExecStart=/usr/local/bin/bun ui/src/ui-server.ts
+Restart=on-failure
+RestartSec=5
+
+Environment=CRABSHACK_ADMIN_SECRET=${ADMIN_SECRET}
+Environment=CRABSHACK_UI_PORT=3000
+Environment=CRABSHACK_API_URL=http://localhost:${PORT}
+
+[Install]
+WantedBy=multi-user.target
+EOF
 systemctl daemon-reload
 
 # ------------------------------------------------------ 10. Start services ---
@@ -266,6 +291,9 @@ wait_for_nomad
 
 log "Starting CrabShack API"
 systemctl enable --now crabshack-api
+
+log "Starting CrabShack UI"
+systemctl enable --now crabshack-ui
 
 # ----------------------------------------------------------- 11. Validate ---
 
@@ -289,6 +317,7 @@ check "Sysbox runtime available"  "docker info --format '{{.Runtimes}}' | grep -
 check "Nomad sees Docker"         "nomad node status -self -json | grep -q '\"docker.version\"'"
 check "Nomad allows sysbox-runc"  "nomad node status -self -json | grep -q sysbox-runc"
 check "CrabShack API health"      "curl -sf http://localhost:${PORT}/health"
+check "CrabShack UI reachable"   "curl -sf -o /dev/null http://localhost:3000/login"
 
 if [ "$FAIL" -eq 0 ]; then
   echo ""
@@ -296,6 +325,7 @@ if [ "$FAIL" -eq 0 ]; then
   echo ""
   echo "  Nomad UI:       http://${PUBLIC_IP}:4646"
   echo "  CrabShack API:  http://${PUBLIC_IP}:${PORT}"
+  echo "  CrabShack UI:   http://${PUBLIC_IP}:3000"
   echo "  Health check:   curl http://${PUBLIC_IP}:${PORT}/health"
 else
   echo ""
