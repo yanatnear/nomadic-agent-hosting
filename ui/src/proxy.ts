@@ -1,8 +1,5 @@
-import { resolveService } from "../../src/consul/consul-client.ts";
-
 const ADMIN_TOKEN = process.env.CRABSHACK_ADMIN_SECRET ?? "";
 const API_URL = process.env.CRABSHACK_API_URL ?? "http://localhost:7700";
-const CONSUL_ADDR = process.env.CONSUL_HTTP_ADDR ?? "http://127.0.0.1:8500";
 const DEBUG = process.env.CRABSHACK_DEBUG === "1";
 
 export function proxyToApi(req: Request, injectAdmin: boolean): Promise<Response> {
@@ -54,15 +51,12 @@ async function fetchGwInfo(name: string): Promise<GwInfo | null> {
     const inst = (await instRes.json()) as {
       status: string;
       token: string;
+      gateway_address: string | null;
       gateway_port: number | null;
-      ssh_port: number | null;
-      node_id: string | null;
     };
 
-    // Resolve actual address via Consul
-    const ep = await resolveService(CONSUL_ADDR, `agent-${name}`);
-    if (!ep) return null;
-    const gw: GwInfo = { address: ep.address, port: ep.port, token: inst.token, status: inst.status, ts: Date.now() };
+    if (!inst.gateway_address || !inst.gateway_port) return null;
+    const gw: GwInfo = { address: inst.gateway_address, port: inst.gateway_port, token: inst.token, status: inst.status, ts: Date.now() };
     gwCache.set(name, gw);
     return gw;
   } catch { return null; }

@@ -1,9 +1,0 @@
----
-# Bootstrap a Nomad+Consul server node.
-# Usage: ansible-playbook -i inventory.yml playbooks/bootstrap-server.yml
-- hosts: servers
-  become: yes
-  roles:
-    - docker-sysbox
-    - consul-server
-    - nomad-server

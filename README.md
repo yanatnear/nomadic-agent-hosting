@@ -48,7 +48,32 @@ Container orchestration platform for running NEAR AI agent instances. Replaces t
 | `ironclaw` | Worker container + SSH sidecar, shared host volume | Docker |
 | `ironclaw-dind` | Sysbox container with Docker-in-Docker capability | Sysbox |
 
-## Quick Start (Single-Node Dev)
+## Single-Node Deploy (Recommended)
+
+The fastest way to get a fully working instance on a GCloud Ubuntu 22.04+ VM. Installs Docker, Sysbox, Nomad, Bun, egress scripts, and starts the CrabShack API — all as a single idempotent script.
+
+```bash
+# Clone the repo on the VM first, then:
+sudo bash infra/scripts/deploy.sh <ADMIN_SECRET> [APP_DIR] [PORT]
+```
+
+| Argument | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ADMIN_SECRET` | Yes | — | `CRABSHACK_ADMIN_SECRET` value |
+| `APP_DIR` | No | `/home/$SUDO_USER/agent-hosting-v2` | Path to cloned repo |
+| `PORT` | No | `7700` | API listen port |
+
+After deploy completes, validate:
+```bash
+bash infra/scripts/validate-cluster.sh
+curl http://localhost:7700/health
+```
+
+The script creates two systemd services: `nomad` and `crabshack-api`. Manage with `systemctl {start,stop,restart,status} crabshack-api`.
+
+## Quick Start (Local Dev)
+
+For local development where you only need Nomad (no systemd API service):
 
 ```bash
 # 1. Bootstrap Nomad + Docker + Sysbox
@@ -79,10 +104,18 @@ ssh root@<server-ip> 'bash -s' < infra/scripts/bootstrap-server.sh 10.0.0.1,10.0
 
 ### Client Nodes (N workers)
 
+Each client node runs Docker + Sysbox + Nomad client and auto-joins the server cluster. The script installs all dependencies and configures the Docker plugin for Sysbox runtimes.
+
 ```bash
-# On each client node (pass same server IPs for auto-join):
+# On each client node (pass comma-separated server IPs for auto-join):
 ssh root@<client-ip> 'bash -s' < infra/scripts/bootstrap-client.sh 10.0.0.1,10.0.0.2,10.0.0.3
 ```
+
+What `bootstrap-client.sh` does:
+1. Installs Docker CE and Sysbox CE 0.6.6
+2. Installs Nomad 1.7.7
+3. Writes Nomad client config with the Docker plugin (sysbox-runc + runc, volumes enabled)
+4. Creates a systemd unit and starts Nomad, auto-joining the provided server IPs
 
 ### Validate
 
@@ -305,6 +338,11 @@ nomad/
   configs/              Prometheus, Grafana, Promtail configs
 
 infra/
-  scripts/              Cluster bootstrap (server, client, local dev)
+  scripts/
+    deploy.sh           Single-node full deploy (Docker+Sysbox+Nomad+API)
+    bootstrap-server.sh Multi-node server bootstrap
+    bootstrap-client.sh Multi-node client bootstrap
+    bootstrap-local-dev.sh  Minimal dev setup (Nomad only)
+    validate-cluster.sh Health checks
   configs/              Nomad Docker plugin config
 ```

@@ -44,7 +44,7 @@ test("instance stores all fields QA expects", () => {
 });
 
 test("GET /instances/{name} response has QA-expected fields", () => {
-  // Simulate what handleGetInstance returns (minus Consul lookup)
+  // Simulate what handleGetInstance returns (minus Nomad allocation lookup)
   createInstance(db, makeParams());
   const inst = getInstance(db, "agent-abc12345")!;
 
@@ -59,8 +59,8 @@ test("GET /instances/{name} response has QA-expected fields", () => {
     storage_size: inst.storage_size,
     node_id: inst.node_id || null,
     token: inst.token,
-    gateway_port: null,  // would come from Consul
-    ssh_port: null,      // would come from Consul
+    gateway_port: null,  // would come from Nomad allocation
+    ssh_port: null,      // would come from Nomad allocation
     created_at: inst.created_at,
   };
 

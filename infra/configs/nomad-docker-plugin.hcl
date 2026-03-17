@@ -2,7 +2,7 @@
 # Drop this file into /etc/nomad.d/ on every client node (or merge into
 # the existing nomad.hcl). It is already embedded in the dev config
 # written by bootstrap-local-dev.sh; this file is the canonical reference
-# for production Ansible-managed nodes.
+# for production nodes.
 #
 # Key settings:
 # - allow_runtimes: permits sysbox-runc for DinD containers alongside

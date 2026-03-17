@@ -1,9 +1,0 @@
----
-# Bootstrap a Nomad+Consul client node with Docker + Sysbox.
-# Usage: ansible-playbook -i inventory.yml playbooks/bootstrap-client.yml
-- hosts: clients
-  become: yes
-  roles:
-    - docker-sysbox
-    - consul-client
-    - nomad-client
