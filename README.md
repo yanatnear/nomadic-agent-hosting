@@ -170,6 +170,9 @@ nomad job run nomad/jobs/promtail.nomad.hcl
 | `CRABSHACK_DEBUG` | No | — | Set `1` for debug logging |
 | `NOMAD_ADDR` | No | `http://127.0.0.1:4646` | Nomad API address |
 | `NOMAD_TOKEN` | No | — | Nomad ACL token |
+| `NODE_SSH_HOST` | No | Nomad node public IP / address | Override `/nodes` SSH host for QA and host-level operations |
+| `NODE_SSH_PORT` | No | `22` | Override `/nodes` SSH port |
+| `NODE_SSH_USER` | No | `yan` | Override `/nodes` SSH user |
 
 ### Backups
 

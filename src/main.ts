@@ -57,6 +57,7 @@ function matchRoute(method: string, path: string, pattern: string): string[] | n
 
 Bun.serve({
   port: config.port,
+  idleTimeout: 60,
   async fetch(req) {
     const url = new URL(req.url);
     const path = url.pathname;

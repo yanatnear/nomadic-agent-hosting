@@ -106,6 +106,26 @@ async function reconcileInstanceState(
   return { row, status, nodeId };
 }
 
+async function waitForStoppedInstance(
+  config: CrabshackConfig,
+  jobId: string,
+  timeoutMs = 30000,
+  intervalMs = 1000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const job = await getJob(config.nomadAddr, jobId, config.nomadToken);
+    if (!job) return;
+    const allocs = await getJobAllocs(config.nomadAddr, jobId, config.nomadToken);
+    const hasRunningAlloc = allocs.some((a: any) => a.ClientStatus === "running");
+    if ((job as any).Stop && !hasRunningAlloc) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`Timed out waiting for Nomad job ${jobId} to stop`);
+}
+
 export async function handleCreateInstance(
   req: Request,
   db: Database,
@@ -276,6 +296,7 @@ export async function handleStopInstance(
   return sseStream(async (send) => {
     if (inst.nomad_job_id) {
       await stopJob(config.nomadAddr, inst.nomad_job_id, config.nomadToken);
+      await waitForStoppedInstance(config, inst.nomad_job_id);
     }
     updateInstanceStatus(db, name, "stopped");
     send("stopped", { name });

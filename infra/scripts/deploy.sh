@@ -257,6 +257,9 @@ Environment=CRABSHACK_ADMIN_SECRET=${ADMIN_SECRET}
 Environment=CRABSHACK_PORT=${PORT}
 Environment=CRABSHACK_DATA_DIR=/data/crabshack
 Environment=NOMAD_ADDR=http://${INTERNAL_IP}:4646
+Environment=NODE_SSH_HOST=${PUBLIC_IP}
+Environment=NODE_SSH_PORT=22
+Environment=NODE_SSH_USER=${SUDO_USER:-root}
 
 [Install]
 WantedBy=multi-user.target
