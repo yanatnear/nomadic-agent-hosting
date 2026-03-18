@@ -1,4 +1,4 @@
-# Nomadic CrabShack — Nomad-based Orchestration for Agent Hosting 
+# Nomadic Crabshack — Nomad-based Orchestration for Agent Hosting 
 
 Container orchestration platform for running NEAR AI agent instances. Replaces the v1 monolith (~16k LoC) with ~4.5k LoC of Bun.js + Nomad HCL, delegating scheduling, health checks, and resource management to HashiCorp Nomad.
 
